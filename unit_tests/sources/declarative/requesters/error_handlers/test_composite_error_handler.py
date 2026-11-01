@@ -26,6 +26,32 @@ from airbyte_cdk.sources.streams.http.error_handlers.response_models import (
 SOME_BACKOFF_TIME = 60
 
 
+@pytest.mark.parametrize("status_code", [401, 403])
+@pytest.mark.parametrize("use_predicate", [False, True])
+def test_refresh_token_resolution_precedes_default_failure(status_code, use_predicate):
+    response_filter = HttpResponseFilter(
+        action=ResponseAction.REFRESH_TOKEN_THEN_RETRY,
+        predicate="{{ response.get('code') == 124 }}" if use_predicate else None,
+        http_codes=None if use_predicate else {status_code},
+        config={},
+        parameters={},
+    )
+    refresh_handler = DefaultErrorHandler(
+        response_filters=[response_filter], config={}, parameters={}
+    )
+    fallback_handler = DefaultErrorHandler(config={}, parameters={})
+    response = create_response(status_code, json_body={"code": 124})
+    assert fallback_handler.interpret_response(response).response_action == ResponseAction.FAIL
+    expected = refresh_handler.interpret_response(response)
+
+    composite = CompositeErrorHandler(
+        error_handlers=[refresh_handler, fallback_handler], parameters={}
+    )
+
+    assert expected.response_action == ResponseAction.REFRESH_TOKEN_THEN_RETRY
+    assert composite.interpret_response(response) == expected
+
+
 @pytest.mark.parametrize(
     "test_name, first_handler_behavior, second_handler_behavior, expected_behavior",
     [
